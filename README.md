@@ -1,3 +1,9 @@
+<!-- FORK-IT-BANNER -->
+> **Fork italiano FlipUp.** Interfaccia Android in italiano, APK da sideload con id `com.noop.whoop.ita` (nome **NOOP IT**, si installa accanto a NOOP ufficiale) e sincronizzazione da [ryanbr/noop](https://github.com/ryanbr/noop). Istruzioni: [docs/FORK-IT.md](docs/FORK-IT.md).
+>
+> **Italian FlipUp fork.** Italian Android UI, a sideload APK (`com.noop.whoop.ita`, launcher name **NOOP IT**) that installs beside official NOOP, and a sync from [ryanbr/noop](https://github.com/ryanbr/noop). See [docs/FORK-IT.md](docs/FORK-IT.md).
+<!-- /FORK-IT-BANNER -->
+
 <p align="center">
   <img src="docs/assets/logo-v3.png" alt="NOOP" width="72">
 </p>
