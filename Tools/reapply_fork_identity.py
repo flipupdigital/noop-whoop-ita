@@ -58,6 +58,31 @@ def ensure_banner() -> None:
     print("README banner restored")
 
 
+def ensure_changelog_locale() -> int:
+    """What's New titles are written for every directory in LOCALE_DIRS.
+
+    A values-it tree that is missing from that map makes Tools Python CI fail
+    and drops an Italian title if one is supplied. Upstream merges can reset
+    the map; put the Italian entry back.
+    """
+    path = ROOT / "Tools/appchangelog-gen.py"
+    text = path.read_text(encoding="utf-8")
+    if '"it": "values-it"' in text:
+        return 0
+    old = '"pl": "values-pl", "ru": "values-ru"}'
+    new = '"pl": "values-pl", "ru": "values-ru", "it": "values-it"}'
+    if old not in text:
+        print(
+            "values-it is not in Tools/appchangelog-gen.py LOCALE_DIRS, and the "
+            "expected line was not found. Add \"it\": \"values-it\" before merging.",
+            file=sys.stderr,
+        )
+        return 1
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    print("LOCALE_DIRS gained it -> values-it")
+    return 0
+
+
 def ensure_gradle_hook() -> int:
     text = GRADLE.read_text(encoding="utf-8")
     if MARKER not in text or "fork.properties" not in text:
@@ -83,7 +108,7 @@ def main() -> int:
     set_app_name(ROOT / "android/app/src/debug/res/values/strings.xml", "NOOP IT Debug")
     set_app_name(ROOT / "android/app/src/demo/res/values/strings.xml", "NOOP IT Demo")
     ensure_banner()
-    return ensure_gradle_hook()
+    return ensure_changelog_locale() or ensure_gradle_hook()
 
 
 if __name__ == "__main__":
