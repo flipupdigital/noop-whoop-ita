@@ -17,17 +17,31 @@ val isStagingRelease = project.hasProperty("stagingRelease")
 val requestedReleaseBuild = gradle.startParameter.taskNames.any {
     it.contains("Release", ignoreCase = true)
 }
+// FORK-IT-IDENTITY: read android/fork.properties when present.
+// The Italian fork ships that file so release APKs use com.noop.whoop.ita and can
+// be signed with the checked-in debug keystore. Upstream ryanbr/noop has no such
+// file, so a stock checkout keeps applicationId = com.noop.whoop and still refuses
+// an unsigned real release. Tools/reapply_fork_identity.py checks this marker.
+val forkPropsFile = rootProject.file("fork.properties")
+val forkProps = Properties().apply {
+    if (forkPropsFile.exists()) forkPropsFile.inputStream().use { load(it) }
+}
+val forkApplicationId = forkProps.getProperty("applicationId")?.trim().orEmpty()
+val forkVersionSuffix = forkProps.getProperty("versionNameSuffix")?.trim().orEmpty()
 
 android {
     namespace = "com.noop"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.noop.whoop"
+        applicationId = if (forkApplicationId.isNotEmpty()) forkApplicationId else "com.noop.whoop"
         minSdk = 26
         targetSdk = 34
         versionCode = 532
         versionName = "11.8.0"
+        if (forkVersionSuffix.isNotEmpty()) {
+            versionNameSuffix = forkVersionSuffix
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -73,7 +87,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (!keystorePropsFile.exists() && !isStagingRelease && requestedReleaseBuild) {
+            if (!keystorePropsFile.exists() && !isStagingRelease &&
+                forkApplicationId.isEmpty() && requestedReleaseBuild
+            ) {
                 throw GradleException(
                     "Refusing to build a real release without keystore.properties. " +
                         "Use -PstagingRelease for debug-key staging artifacts only."

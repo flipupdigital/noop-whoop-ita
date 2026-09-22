@@ -1,0 +1,136 @@
+# Pull ryanbr/noop main into this fork without dropping the Italian UI.
+#
+# Opens (or updates) a pull request from `upstream-sync` into `main`. It does not
+# push to main by itself. Review that PR: new screens may still be in English
+# until Tools/generate_values_it.py fills them, and a conflict in
+# android/app/build.gradle.kts stops the job on purpose so the fork application id
+# is not silently lost.
+name: Sync upstream
+
+on:
+  schedule:
+    # Monday 06:17 UTC. A fixed minute avoids the top-of-hour stampede.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch ryanbr/noop
+        run: |
+          git remote add upstream https://github.com/ryanbr/noop.git \
+            || git remote set-url upstream https://github.com/ryanbr/noop.git
+          git fetch upstream main
+
+      - name: Merge upstream into upstream-sync
+        run: |
+          set -euo pipefail
+          git checkout -B upstream-sync origin/main
+          if git merge upstream/main --no-edit; then
+            echo "Clean merge."
+            exit 0
+          fi
+          echo "Merge conflicts. Keeping fork-owned paths and taking upstream English resources."
+          conflicted=$(git diff --name-only --diff-filter=U)
+          echo "$conflicted"
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            case "$path" in
+              android/app/src/main/res/values-it/*|\
+              docs/FORK-IT.md|\
+              .github/workflows/sync-upstream.yml|\
+              .github/workflows/android-apk.yml|\
+              android/fork.properties|\
+              Tools/generate_values_it.py|\
+              Tools/reapply_fork_identity.py)
+                git checkout --ours -- "$path"
+                git add -- "$path"
+                ;;
+              README.md|\
+              android/app/src/main/res/values/strings.xml|\
+              android/app/src/main/res/values-*/strings.xml|\
+              android/app/src/debug/res/values/strings.xml|\
+              android/app/src/demo/res/values/strings.xml)
+                git checkout --theirs -- "$path"
+                git add -- "$path"
+                ;;
+            esac
+          done <<< "$conflicted"
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo "::error::Unresolved conflicts remain (often android/app/build.gradle.kts). Keep the FORK-IT-IDENTITY block that reads android/fork.properties. See docs/FORK-IT.md."
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+          git commit -m "Merge upstream ryanbr/noop main"
+
+      - name: Restore fork launcher name and Italian banner
+        run: python3 Tools/reapply_fork_identity.py
+
+      - name: Translate string keys added upstream
+        run: |
+          # Best-effort. Existing values-it entries are kept. If the translator
+          # cannot be reached, Android still falls back to English for new keys
+          # and the pull request will say so.
+          python3 Tools/generate_values_it.py || echo "::warning::Italian fill did not finish. New keys stay English until the next run."
+
+      - name: Commit identity and translation follow-up
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No follow-up edits."
+          else
+            git commit -m "Reapply Italian fork identity after upstream merge"
+          fi
+
+      - name: Open or update the sync pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet origin/main HEAD; then
+            echo "Fork main already contains upstream/main. No pull request."
+            exit 0
+          fi
+          if git ls-remote --exit-code --heads origin upstream-sync >/dev/null 2>&1; then
+            git push --force-with-lease origin upstream-sync
+          else
+            git push -u origin upstream-sync
+          fi
+          cat > /tmp/sync-pr-body.md <<'EOF'
+          ## Upstream sync / Sincronizzazione
+
+          Merges `ryanbr/noop` `main` into this fork.
+
+          Italian resources under `android/app/src/main/res/values-it/` are kept. New English strings are filled when the translator step succeeds; otherwise those rows stay English and Android shows the `values/` fallback until someone runs `python3 Tools/generate_values_it.py`.
+
+          Launcher name **NOOP IT** and `applicationId` `com.noop.whoop.ita` (`android/fork.properties`) are reapplied. LICENSE, DISCLAIMER, and attribution are untouched.
+
+          Review `build.gradle.kts` if this job failed on a conflict: the `FORK-IT-IDENTITY` block has to stay. See `docs/FORK-IT.md`.
+          EOF
+          sed -i 's/^          //' /tmp/sync-pr-body.md
+          existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --head upstream-sync --base main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo "$GITHUB_REPOSITORY" --title "Sync upstream ryanbr/noop" --body-file /tmp/sync-pr-body.md
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head upstream-sync \
+              --title "Sync upstream ryanbr/noop" --body-file /tmp/sync-pr-body.md
+          fi
