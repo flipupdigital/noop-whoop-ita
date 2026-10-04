@@ -1,3 +1,7 @@
+<!-- FORK-IT-BANNER -->
+> **NOOP IT** (`com.noop.whoop.ita`) is this fork's sideload build of [ryanbr/noop](https://github.com/ryanbr/noop). It installs beside official NOOP and uses upstream's Italian (`values-it`). Personal use under the PolyForm Noncommercial license. See [docs/FORK-IT.md](docs/FORK-IT.md).
+<!-- /FORK-IT-BANNER -->
+
 <p align="center">
   <img src="docs/assets/logo-v3.png" alt="NOOP" width="72">
 </p>

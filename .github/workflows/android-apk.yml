@@ -1,0 +1,101 @@
+# Sideload APK for this fork.
+#
+# assembleFullRelease is signed with android/fork-debug.keystore via a
+# keystore.properties file written on the runner (gitignored, never committed).
+# applicationId stays com.noop.whoop.ita — no -PstagingRelease suffix — so the
+# package installs beside official NOOP. Play Protect will warn; this is not a
+# Play upload key.
+name: Android sideload APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Point release signing at the fork debug keystore
+        working-directory: android
+        run: |
+          cat > keystore.properties <<'EOF'
+          storeFile=fork-debug.keystore
+          storePassword=android
+          keyAlias=androiddebugkey
+          keyPassword=android
+          EOF
+
+      - name: Build release APK
+        working-directory: android
+        run: ./gradlew assembleFullRelease --stacktrace
+
+      - name: Check package id and launcher name
+        run: |
+          set -euo pipefail
+          src=$(find android/app/build/outputs/apk/full/release -name '*.apk' -type f | head -n 1)
+          cp "$src" NOOP-IT-android.apk
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          aapt=""
+          if [ -n "$sdk" ]; then
+            aapt=$(find "$sdk/build-tools" -name aapt -type f 2>/dev/null | sort | tail -n 1 || true)
+          fi
+          if [ -z "$aapt" ]; then
+            aapt=$(find "$HOME" /usr/local/lib/android /opt -path '*build-tools*' -name aapt -type f 2>/dev/null | sort | tail -n 1 || true)
+          fi
+          if [ -z "$aapt" ]; then
+            echo "::error::aapt not found; refusing to publish an unverified APK"
+            exit 1
+          fi
+          badging=$("$aapt" dump badging NOOP-IT-android.apk)
+          echo "$badging" | head -n 8
+          echo "$badging" | grep -Eq "package: name='com\.noop\.whoop\.ita' versionCode='[0-9]+' versionName='[0-9]+\.[0-9]+\.[0-9]+'"
+          echo "$badging" | grep -q "application-label:'NOOP IT'"
+          echo "$badging" | grep -q "application-label-it:'NOOP IT'"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOOP-IT-android
+          path: NOOP-IT-android.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish rolling release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=noop-it-latest
+          SHA="${GITHUB_SHA:0:7}"
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+            --title "NOOP IT Android · ${SHA}" \
+            --notes "Sideload APK. applicationId \`com.noop.whoop.ita\`, launcher name NOOP IT. Signed with android/fork-debug.keystore, not a Play upload key. Install steps: docs/FORK-IT.md." \
+            NOOP-IT-android.apk
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)
+          [ "$draft" = "false" ] || { echo "::error::$TAG is still a draft."; exit 1; }

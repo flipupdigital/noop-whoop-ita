@@ -1,0 +1,103 @@
+# Merge ryanbr/noop main into this fork and open a pull request.
+#
+# Italian resources are upstream's values-it. The only identity this job puts
+# back is the launcher name NOOP IT and applicationId com.noop.whoop.ita.
+# build.gradle.kts and Tools/i18n_echo_baseline.txt are taken from upstream, then
+# Tools/reapply_fork_identity.py restores that override. Any other conflict
+# fails the job and lists the paths; nothing is pushed.
+name: Sync upstream
+
+on:
+  schedule:
+    # Monday 06:17 UTC. A fixed minute avoids the top-of-hour stampede.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch ryanbr/noop
+        run: |
+          git remote add upstream https://github.com/ryanbr/noop.git \
+            || git remote set-url upstream https://github.com/ryanbr/noop.git
+          git fetch upstream main
+
+      - name: Merge upstream into upstream-sync
+        run: |
+          set -euo pipefail
+          git checkout -B upstream-sync origin/main
+          if git merge upstream/main --no-edit; then
+            echo "Clean merge."
+          else
+            if [ ! -f .git/MERGE_HEAD ]; then
+              echo "::error::git merge failed before a conflicted merge started."
+              exit 1
+            fi
+            python3 Tools/reapply_fork_identity.py resolve-conflicts
+            git commit --no-edit
+          fi
+
+      - name: Restore launcher name and application id
+        run: python3 Tools/reapply_fork_identity.py
+
+      - name: Commit the identity override
+        run: |
+          set -euo pipefail
+          git add -- \
+            README.md \
+            android/app/build.gradle.kts \
+            android/app/src/debug/res/values/strings.xml \
+            android/app/src/demo/res/values/strings.xml \
+            android/app/src/main/res \
+            Tools/i18n_echo_baseline.txt
+          if git diff --cached --quiet; then
+            echo "Identity already matches."
+          else
+            git commit -m "Reapply NOOP IT launcher name and application id"
+          fi
+
+      - name: Open or update the sync pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet origin/main HEAD; then
+            echo "Fork main already contains upstream/main and the sideload identity. No pull request."
+            exit 0
+          fi
+          git push --force-with-lease -u origin upstream-sync
+          cat > /tmp/sync-pr-body.md <<'EOF'
+          ## Upstream sync
+
+          Merges `ryanbr/noop` `main` into this fork.
+
+          `android/app/src/main/res/values-it/` is upstream's Italian. On a conflict, `android/app/build.gradle.kts` and `Tools/i18n_echo_baseline.txt` are taken from upstream and `Tools/reapply_fork_identity.py` writes back only the launcher name **NOOP IT** and `applicationId` `com.noop.whoop.ita`.
+
+          Any other conflict fails the workflow and names the files. LICENSE and attribution are untouched. See `docs/FORK-IT.md`.
+          EOF
+          existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --head upstream-sync --base main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo "$GITHUB_REPOSITORY" --title "Sync upstream ryanbr/noop" --body-file /tmp/sync-pr-body.md
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head upstream-sync \
+              --title "Sync upstream ryanbr/noop" --body-file /tmp/sync-pr-body.md
+          fi

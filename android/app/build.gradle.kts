@@ -23,7 +23,8 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.noop.whoop"
+        // FORK-IT-IDENTITY: sideload id, installs beside official com.noop.whoop.
+        applicationId = "com.noop.whoop.ita"
         minSdk = 26
         targetSdk = 34
         versionCode = 554
